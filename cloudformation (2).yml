@@ -1,0 +1,540 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Enhanced complete infrastructure template with improved security and monitoring'
+
+Parameters:
+  EnvironmentName:
+    Description: 'Environment name prefix'
+    Type: String
+    Default: 'WebApp'
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9-]*$'
+    ConstraintDescription: 'Must start with a letter and contain only alphanumeric characters and hyphens'
+  VpcCIDR:
+    Description: 'VPC CIDR block'
+    Type: String
+    Default: '10.0.0.0/16'
+  PublicSubnet1CIDR:
+    Description: 'Public Subnet 1 CIDR'
+    Type: String
+    Default: '10.0.1.0/24'
+  PublicSubnet2CIDR:
+    Description: 'Public Subnet 2 CIDR'
+    Type: String
+    Default: '10.0.2.0/24'
+  PrivateSubnet1CIDR:
+    Description: 'Private Subnet 1 CIDR'
+    Type: String
+    Default: '10.0.3.0/24'
+  PrivateSubnet2CIDR:
+    Description: 'Private Subnet 2 CIDR'
+    Type: String
+    Default: '10.0.4.0/24'
+  DatabaseSubnet1CIDR:
+    Description: 'Database Subnet 1 CIDR'
+    Type: String
+    Default: '10.0.5.0/24'
+  DatabaseSubnet2CIDR:
+    Description: 'Database Subnet 2 CIDR'
+    Type: String
+    Default: '10.0.6.0/24'
+  InstanceType:
+    Description: 'EC2 instance type'
+    Type: String
+    Default: 't3.micro'
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+  DBInstanceClass:
+    Description: 'RDS instance class'
+    Type: String
+    Default: 'db.t3.micro'
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+  DBName:
+    Description: 'Database name'
+    Type: String
+    Default: 'webappdb1'
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]*$'
+    MinLength: 3
+    MaxLength: 63
+  DBUsername:
+    Description: 'Database username'
+    Type: String
+    NoEcho: true
+    Default: 'adminuser'  # Added default to prevent empty value
+    MinLength: 3
+    AllowedPattern: '^[a-zA-Z][a-zA-Z0-9_]*$'
+  DBPassword:
+    Description: 'Database password'
+    Type: String
+    NoEcho: true
+    Default: 'Passw0rd!'  # Added default to prevent empty value
+    MinLength: 8
+    MaxLength: 128
+    AllowedPattern: '(?=^.{8,}$)(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).*$'
+    ConstraintDescription: 'Must be at least 8 characters and include uppercase, lowercase, number, and special character'
+  WebServerCapacity:
+    Description: 'Number of web servers'
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 4
+
+Mappings:
+  AWSRegionToAMI:
+    us-east-1:
+      AMI: 'ami-0c55b159cbfafe1f0' # Amazon Linux 2023
+    us-west-2:
+      AMI: 'ami-03f65b8614a860c29' # Amazon Linux 2023
+    ap-south-1:
+      AMI: 'ami-0f5ee92e2d63afc18' # Amazon Linux 2023
+    eu-west-1:
+      AMI: 'ami-0a5d9cd4e632d4e9b' # Amazon Linux 2023
+
+Conditions:
+  IsMultiAZ: !Not [!Equals [!Ref WebServerCapacity, 1]]
+  CreateProdResources: !Equals [!Ref EnvironmentName, 'Production']
+
+Resources:
+  # Network Infrastructure
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-VPC'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-IGW'
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet1CIDR
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-PublicSubnet1'
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet2CIDR
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-PublicSubnet2'
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-PrivateSubnet1'
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-PrivateSubnet2'
+
+  DatabaseSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref DatabaseSubnet1CIDR
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-DatabaseSubnet1'
+
+  DatabaseSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref DatabaseSubnet2CIDR
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-DatabaseSubnet2'
+
+  # NAT Gateway and Route Tables (Added for better private subnet connectivity)
+  EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: [EIP, PublicSubnet1]
+    Properties:
+      AllocationId: !GetAtt EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-NATGateway'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-PublicRT'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-PrivateRT'
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NATGateway
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 'Subnet group for RDS'
+      SubnetIds:
+        - !Ref DatabaseSubnet1
+        - !Ref DatabaseSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-DBSubnetGroup'
+
+  # Security Groups
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'ALB Security Group'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref VpcCIDR
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-ALB-SG'
+
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Web Server Security Group'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref VpcCIDR
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65000
+          CidrIp: 0.0.0.0/0          
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-Web-SG'
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Database Security Group'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-DB-SG'
+
+  # Load Balancer Components
+  WebAppLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: [ALBSecurityGroup, PublicSubnet1, PublicSubnet2]
+    Properties:
+      Name: !Sub '${EnvironmentName}-ALB'
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Type: application
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-ALB'
+
+  WebServerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${EnvironmentName}-TG'
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 60
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      TargetType: instance
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-TG'
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn: [WebAppLoadBalancer, WebServerTargetGroup]
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebServerTargetGroup
+      LoadBalancerArn: !Ref WebAppLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  # Compute Resources
+  WebServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ec2.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - 'arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy'
+      Path: /
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-WebServer-Role'
+
+  WebServerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    DependsOn: WebServerRole
+    Properties:
+      Path: /
+      Roles:
+        - !Ref WebServerRole
+
+  WebServerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn: [WebServerInstanceProfile, WebServerSecurityGroup]
+    Properties:
+      LaunchTemplateName: !Sub '${EnvironmentName}-LaunchTemplate'
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        ImageId: !FindInMap [AWSRegionToAMI, !Ref 'AWS::Region', AMI]
+        IamInstanceProfile:
+          Arn: !GetAtt WebServerInstanceProfile.Arn
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: false
+            Groups:
+              - !Ref WebServerSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            # Update package lists
+            for i in {1..5}; do
+              sudo apt-get update -y && break || sleep 15
+            done
+
+            # Install nginx with retries
+            for i in {1..5}; do
+              sudo apt-get install -y nginx && break || sleep 15
+            done
+
+            # Only configure if installation succeeded
+            if command -v nginx >/dev/null 2>&1; then
+              # Create nginx config directory if it doesn't exist
+              sudo mkdir -p /etc/nginx/conf.d
+              
+              # Configure nginx
+              sudo sh -c "cat > /etc/nginx/conf.d/health.conf << EOF
+              server {
+                  listen 80;
+                  location /health {
+                      return 200 'OK';
+                      add_header Content-Type text/plain;
+                  }
+                  location / {
+                      root /var/www/html;
+                      index index.html;
+                  }
+              }
+            EOF
+              "
+              sudo cat /etc/nginx/conf.d/health.conf
+
+              # Create index page
+              sudo mkdir -p /var/www/html
+              sudo sh -c 'echo "<html><body><h1>Hello World from $(hostname -f)</h1></body></html>" > /var/www/html/index.html'
+              
+              # Fix permissions for Ubuntu (Nginx user is www-data)
+              sudo chown -R www-data:www-data /var/www/html
+              sudo chmod -R 755 /var/www/html
+              
+              # Validate config
+              sudo nginx -t
+              
+              # Start services
+              sudo systemctl enable --now nginx
+              sudo systemctl restart nginx
+            else
+              echo "Nginx installation failed" > /tmp/nginx-installation-failed.log
+            fi
+
+
+
+  WebServerAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: [WebServerLaunchTemplate, WebServerTargetGroup, PrivateSubnet1, PrivateSubnet2]
+    Properties:
+      AutoScalingGroupName: !Sub '${EnvironmentName}-ASG'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebServerLaunchTemplate
+        Version: !GetAtt WebServerLaunchTemplate.LatestVersionNumber
+      MinSize: '1'
+      MaxSize: '4'
+      DesiredCapacity: !Ref WebServerCapacity
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      TargetGroupARNs:
+        - !Ref WebServerTargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 600
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-WebServer'
+          PropagateAtLaunch: true
+      Cooldown: 300
+      TerminationPolicies:
+        - Default
+
+  # Database Resources
+  WebAppDB:
+    Type: AWS::RDS::DBInstance
+    DependsOn: [DatabaseSubnetGroup, DatabaseSecurityGroup]
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      DBInstanceIdentifier: !Sub '${EnvironmentName}-DB'
+      AllocatedStorage: '20'
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: postgres
+      EngineVersion: '16.6'
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBName: !Ref DBName
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt DatabaseSecurityGroup.GroupId
+      MultiAZ: !If [IsMultiAZ, true, false]
+      PubliclyAccessible: false
+      StorageType: gp3
+      BackupRetentionPeriod: 7
+      StorageEncrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-DB'
+
+Outputs:
+  WebAppURL:
+    Description: 'Application URL'
+    Value: !Sub 'http://${WebAppLoadBalancer.DNSName}'
+  DatabaseEndpoint:
+    Description: 'RDS Endpoint'
+    Value: !GetAtt WebAppDB.Endpoint.Address
+  WebServerASGName:
+    Description: 'Auto Scaling Group Name'
+    Value: !Ref WebServerAutoScalingGroup
